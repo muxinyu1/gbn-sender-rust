@@ -1,0 +1,12 @@
+{
+    "UDPPort": 42695,
+    "DataSize": 1024,
+    "ErrorRate": 10,
+    "LostRate": 10,
+    "SWSize": 4,
+    "InitSeqNo": 0,
+    "Timeout": 1000,
+    "Where": "127.0.0.1",
+    "WhichPort": 8848,
+    "FileToSend": "text"
+}
