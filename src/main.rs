@@ -1,5 +1,5 @@
 use crate::{config::Config, packet::Packet};
-use std::sync::mpsc::channel;
+use std::sync::{mpsc::channel, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use std::{fs::File, io::Read, net::UdpSocket};
@@ -10,18 +10,35 @@ mod util;
 fn main() {
     let (tx, rx) = channel();
 
+    let config = Config::read("config.json");
+    let socket =
+        UdpSocket::bind(format!("127.0.0.1:{}", config.UDPPort)).expect("创建UDP套接字失败");
+    socket.set_nonblocking(true).expect("设置套接字非阻失败");
+    let shared_socket = Arc::new(Mutex::new(socket));
+
     // 创建接收ACK的线程
+    let recv_socket = shared_socket.clone();
     let recv_trd = thread::spawn(move || loop {
-        let config = Config::read("config.json");
-        let socket =
-            UdpSocket::bind(format!("127.0.0.1:{}", config.UDPPort)).expect("创建UDP套接字失败");
+        thread::sleep(std::time::Duration::from_millis(500)); // TODO:在config文件中指定轮询时间
+        let socket = recv_socket.lock().unwrap();
         let mut buf = [0u8; std::mem::size_of::<i32>()];
-        socket.recv_from(&mut buf).expect("接收ACK分组失败");
-        let seq_num = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-        tx.send(seq_num).unwrap();
+        match socket.recv_from(&mut buf) {
+            Ok((_, _)) => {
+                let seq_num = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                tx.send(seq_num).unwrap();
+            }
+            Err(ref err) => {
+                if err.kind() == std::io::ErrorKind::WouldBlock {
+                } else {
+                    print!("接收ACK失败: {}", err);
+                    return;
+                }
+            }
+        }
     });
 
     // 创建发送线程
+    let send_socket = shared_socket.clone();
     let send_trd = thread::spawn(move || {
         let config = Config::read("config.json");
         let mut file = File::open(&config.FileToSend).expect("无法打开要发送的文件");
@@ -44,7 +61,7 @@ fn main() {
             }
 
             let mut packet = Packet {
-                seq_num: seq_num,
+                seq_num,
                 data_size: config.DataSize,
                 data: vec![],
                 checksum: 0,
@@ -63,16 +80,12 @@ fn main() {
                 let (stp_sn, stp_recv) = channel();
                 let packet_trd = thread::spawn(move || {
                     let config = Config::read("config.json");
-                    let socket = UdpSocket::bind(format!("127.0.0.1:{}", config.UDPPort))
-                        .expect("创建UDP套接字失败");
+                    let socket = send_socket.lock().unwrap();
                     loop {
-                        match stp_recv.try_recv() {
-                            Ok(b) => {
-                                if b {
-                                    break;
-                                }
+                        if let Ok(b) = stp_recv.try_recv() {
+                            if b {
+                                break;
                             }
-                            Err(_) => {}
                         }
                         util::send_packet(&packet, &socket, &config);
                         thread::sleep(Duration::from_millis(config.Timeout as u64));
@@ -111,13 +124,10 @@ fn main() {
                 let socket = UdpSocket::bind(format!("127.0.0.1:{}", config.UDPPort))
                     .expect("创建UDP套接字失败");
                 loop {
-                    match stp_recv.try_recv() {
-                        Ok(b) => {
-                            if b {
-                                break;
-                            }
+                    if let Ok(b) = stp_recv.try_recv() {
+                        if b {
+                            break;
                         }
-                        Err(_) => {}
                     }
                     util::send_packet(&packet, &socket, &config);
                     thread::sleep(Duration::from_millis(config.Timeout as u64));
