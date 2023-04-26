@@ -3,7 +3,7 @@ use crate::packet::Packet;
 use std::net::UdpSocket;
 use rand::Rng;
 
-pub fn send_packet(packet: &Packet, socket: &UdpSocket, config: &Config) {
+pub fn send_packet(packet: Packet, socket: &UdpSocket, config: &Config) {
     // 丢失
     let mut rng = rand::thread_rng();
     let random_num = rng.gen_range(1..=100);

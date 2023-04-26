@@ -1,4 +1,5 @@
 
+#[derive(Clone)]
 pub struct Packet {
     pub seq_num: i32,
     pub data_size: usize,
