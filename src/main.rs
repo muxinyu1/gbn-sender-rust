@@ -13,7 +13,7 @@ fn main() {
     let config = Config::read("config.json");
     let socket =
         UdpSocket::bind(format!("127.0.0.1:{}", config.UDPPort)).expect("创建UDP套接字失败");
-    socket.set_nonblocking(true).expect("设置套接字非阻失败");
+    socket.set_nonblocking(true).expect("设置套接字非阻塞失败");
     let shared_socket = Arc::new(Mutex::new(socket));
 
     // 创建接收ACK的线程
@@ -22,9 +22,11 @@ fn main() {
         thread::sleep(std::time::Duration::from_millis(500)); // TODO:在config文件中指定轮询时间
         let socket = recv_socket.lock().unwrap();
         let mut buf = [0u8; std::mem::size_of::<i32>()];
+        println!("recv线程正在尝试接收ACK...");
         match socket.recv_from(&mut buf) {
-            Ok((_, _)) => {
+            Ok((_, source)) => {
                 let seq_num = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                println!("接收到来自{}的ACK, ACK确认序号: {}", source, seq_num);
                 tx.send(seq_num).unwrap();
             }
             Err(ref err) => {
@@ -38,7 +40,6 @@ fn main() {
     });
 
     // 创建发送线程
-    let send_socket = shared_socket.clone();
     let send_trd = thread::spawn(move || {
         let config = Config::read("config.json");
         let mut file = File::open(&config.FileToSend).expect("无法打开要发送的文件");
@@ -58,8 +59,10 @@ fn main() {
             if seq_num > frame_cnt {
                 println!("发送完成");
                 break;
+            } else {
+                println!("正在发送第{}帧...", seq_num);
             }
-
+            let send_socket = shared_socket.clone();
             let mut packet = Packet {
                 seq_num,
                 data_size: config.DataSize,
@@ -78,26 +81,23 @@ fn main() {
                 packet.checksum = packet.crc();
 
                 let (stp_sn, stp_recv) = channel();
-                let packet_trd = thread::spawn(move || {
+                let packet_trd = thread::spawn(move || loop {
+                    thread::sleep(Duration::from_millis(config.Timeout as u64));
                     let config = Config::read("config.json");
                     let socket = send_socket.lock().unwrap();
-                    loop {
-                        if let Ok(b) = stp_recv.try_recv() {
-                            if b {
-                                break;
-                            }
+                    if let Ok(b) = stp_recv.try_recv() {
+                        if b {
+                            break;
                         }
-                        util::send_packet(&packet, &socket, &config);
-                        thread::sleep(Duration::from_millis(config.Timeout as u64));
                     }
+                    util::send_packet(&packet, &socket, &config);
                 });
                 packet_trd.join().expect("packet_trd线程启动失败");
-                loop {
-                    let seq_num_from_ack_trd = rx.recv().unwrap(); // 从ACK接收线程收取seq_num
-                    if seq_num_from_ack_trd == seq_num {
-                        stp_sn.send(true).unwrap();
-                        break;
-                    }
+                let seq_num_from_ack_trd = rx.recv().expect("从channel中获取ACK失败"); // 从ACK接收线程收取seq_num
+                if seq_num_from_ack_trd == seq_num {
+                    println!("确认接收方已收到第{}帧, 正在停止第{}帧的发送线程...", seq_num, seq_num);
+                    stp_sn.send(true).unwrap();
+                    break;
                 }
                 seq_num += 1;
                 continue;
@@ -119,28 +119,24 @@ fn main() {
             packet.checksum = packet.crc(); // 读取文件数据后重新计算crc
 
             let (stp_sn, stp_recv) = channel();
-            let packet_trd = thread::spawn(move || {
+            let packet_trd = thread::spawn(move || loop {
+                thread::sleep(Duration::from_millis(config.Timeout as u64));
                 let config = Config::read("config.json");
-                let socket = UdpSocket::bind(format!("127.0.0.1:{}", config.UDPPort))
-                    .expect("创建UDP套接字失败");
-                loop {
-                    if let Ok(b) = stp_recv.try_recv() {
-                        if b {
-                            break;
-                        }
+                let socket = send_socket.lock().unwrap();
+
+                if let Ok(b) = stp_recv.try_recv() {
+                    if b {
+                        break;
                     }
-                    util::send_packet(&packet, &socket, &config);
-                    thread::sleep(Duration::from_millis(config.Timeout as u64));
                 }
+                util::send_packet(&packet, &socket, &config);
             });
             packet_trd.join().expect("packet_trd线程启动失败");
 
-            loop {
-                let seq_num_from_ack_trd = rx.recv().unwrap(); // 从ACK接收线程收取seq_num
-                if seq_num_from_ack_trd == seq_num {
-                    stp_sn.send(true).unwrap();
-                    break;
-                }
+            let seq_num_from_ack_trd = rx.recv().unwrap(); // 从ACK接收线程收取seq_num
+            if seq_num_from_ack_trd == seq_num {
+                stp_sn.send(true).unwrap();
+                break;
             }
 
             seq_num += 1;
