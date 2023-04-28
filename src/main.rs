@@ -8,9 +8,14 @@ mod config;
 mod packet;
 mod util;
 
-async fn recv(recv_socket: Arc<Mutex<UdpSocket>>, tx: std::sync::mpsc::Sender<i32>) {
+async fn recv(recv_socket: Arc<Mutex<UdpSocket>>, tx: std::sync::mpsc::Sender<i32>, ack_rx: std::sync::mpsc::Receiver<bool>) {
     loop {
         thread::sleep(std::time::Duration::from_millis(500)); // TODO:在config文件中指定轮询时间
+        if let Ok(b) = ack_rx.try_recv() {
+            if b {
+                return;
+            }
+        }
         let socket = recv_socket.lock().unwrap();
         let mut buf = [0u8; std::mem::size_of::<i32>()];
         println!("recv线程正在尝试接收ACK...");
@@ -31,7 +36,11 @@ async fn recv(recv_socket: Arc<Mutex<UdpSocket>>, tx: std::sync::mpsc::Sender<i3
     }
 }
 
-async fn send(send_socket: Arc<Mutex<UdpSocket>>, rx: Arc<Mutex<std::sync::mpsc::Receiver<i32>>>) {
+async fn send(
+    send_socket: Arc<Mutex<UdpSocket>>,
+    rx: Arc<Mutex<std::sync::mpsc::Receiver<i32>>>,
+    ack_tx: std::sync::mpsc::Sender<bool>,
+) {
     let config = Config::read("config.json");
     let mut file = File::open(&config.FileToSend).expect("无法打开要发送的文件");
     let mut file_size = std::fs::metadata(&config.FileToSend)
@@ -50,6 +59,7 @@ async fn send(send_socket: Arc<Mutex<UdpSocket>>, rx: Arc<Mutex<std::sync::mpsc:
         let send_socket = send_socket.clone();
         if seq_num > frame_cnt {
             println!("发送完成");
+            ack_tx.send(true).unwrap();
             break;
         } else {
             println!("正在发送第{}帧...", seq_num);
@@ -101,7 +111,7 @@ async fn send(send_socket: Arc<Mutex<UdpSocket>>, rx: Arc<Mutex<std::sync::mpsc:
         let (stp_snd, stp_recv) = channel();
         let packet_handle = tokio::task::spawn(send_single_packet(packet, send_socket, stp_recv));
         let stop_sending_packet_handle =
-        tokio::spawn(stop_sending_packet(rx.clone(), stp_snd, seq_num));
+            tokio::spawn(stop_sending_packet(rx.clone(), stp_snd, seq_num));
         packet_handle.await.unwrap();
         stop_sending_packet_handle.await.unwrap();
         seq_num += 1;
@@ -149,6 +159,9 @@ async fn main() {
     let (tx, rx) = channel();
     let shared_rx = Arc::new(Mutex::new(rx));
 
+    // 发送完成后停止接收ACK
+    let (ack_tx, ack_rx) = channel();
+
     let config = Config::read("config.json");
     let socket =
         UdpSocket::bind(format!("127.0.0.1:{}", config.UDPPort)).expect("创建UDP套接字失败");
@@ -157,11 +170,11 @@ async fn main() {
 
     // 创建接收ACK的线程
     let recv_socket = shared_socket.clone();
-    let recv_handle = tokio::task::spawn(recv(recv_socket, tx));
+    let recv_handle = tokio::task::spawn(recv(recv_socket, tx, ack_rx));
 
-    // 发送线程
+    // 创建发送线程
     let send_socket = shared_socket.clone();
-    let send_handle = tokio::task::spawn(send(send_socket, shared_rx.clone()));
+    let send_handle = tokio::task::spawn(send(send_socket, shared_rx.clone(), ack_tx));
     recv_handle.await.unwrap();
     send_handle.await.unwrap();
 }

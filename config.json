@@ -7,6 +7,6 @@
     "InitSeqNo": 0,
     "Timeout": 1000,
     "Where": "127.0.0.1",
-    "WhichPort": 8848,
-    "FileToSend": "01.intro.A2.Computation.Algorithm.pdf"
+    "WhichPort": 8746,
+    "FileToSend": "ChatGPT_logo.svg"
 }
