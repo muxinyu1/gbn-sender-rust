@@ -1,12 +1,1 @@
-{
-    "UDPPort": 42695,
-    "DataSize": 1024,
-    "ErrorRate": 10,
-    "LostRate": 0,
-    "SWSize": 4,
-    "InitSeqNo": 0,
-    "Timeout": 1000,
-    "Where": "127.0.0.1",
-    "WhichPort": 8746,
-    "FileToSend": "ChatGPT_logo.svg"
-}
+{"UDPPort": 42695, "DataSize": 1024, "ErrorRate": 0, "LostRate": 5, "SWSize": 4, "InitSeqNo": 0, "Timeout": 1000, "Where": "127.0.0.1", "WhichPort": 8746, "FileToSend": "Flag_of_the_People's_Republic_of_China.png"}

@@ -8,7 +8,11 @@ mod config;
 mod packet;
 mod util;
 
-async fn recv(recv_socket: Arc<Mutex<UdpSocket>>, tx: std::sync::mpsc::Sender<i32>, ack_rx: std::sync::mpsc::Receiver<bool>) {
+async fn recv(
+    recv_socket: Arc<Mutex<UdpSocket>>,
+    tx: std::sync::mpsc::Sender<i32>,
+    ack_rx: std::sync::mpsc::Receiver<bool>,
+) {
     loop {
         thread::sleep(std::time::Duration::from_millis(500)); // TODO:在config文件中指定轮询时间
         if let Ok(b) = ack_rx.try_recv() {
